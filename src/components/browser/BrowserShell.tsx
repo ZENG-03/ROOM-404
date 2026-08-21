@@ -18,6 +18,7 @@ import {
 import { useGameStore } from "../../game/engine/GameStore";
 import { resolveNavigation } from "../../game/navigation/NavigationService";
 import { routes } from "../../game/navigation/RouteRegistry";
+import { getUiTheme } from "../../ui/theme";
 
 interface BrowserShellProps {
   children: ReactNode;
@@ -57,6 +58,7 @@ export function BrowserShell({ children, evidenceOpen, onToggleEvidence }: Brows
   }
 
   const route = routes[state.currentRouteId];
+  const theme = getUiTheme(state.currentRouteId, state.chapter);
   const SaveIcon = saveStatus === "saving" ? LoaderCircle : saveStatus === "error" ? CircleAlert : Check;
   const saveLabel = saveStatus === "saving" ? "Saving" : saveStatus === "error" ? "Save failed" : "Saved";
 
@@ -87,6 +89,10 @@ export function BrowserShell({ children, evidenceOpen, onToggleEvidence }: Brows
         </form>
 
         <div className="browser-toolbar-status">
+          <div className="browser-theme-context" title={theme.description}>
+            <span>{theme.code}</span>
+            <strong>{theme.label}</strong>
+          </div>
           <div className="browser-history-control">
             <button className="toolbar-icon-button" type="button" title="Recent archive history" aria-label="Recent archive history" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>
               <History aria-hidden="true" />

@@ -4,15 +4,21 @@ import type { EndingId, GameEvent, GameState, NavigatePayload, RouteId } from ".
 import { calculateAnomalyLevel } from "./AnomalyEngine";
 import { calculateUnknownStage } from "./UnknownEngine";
 import { getNewAchievementIds } from "./AchievementEngine";
+import { evaluateDeduction, getDeductionCase, getNextDeductionCaseId } from "../../story/deductions";
 
 const SAVE_KEY = "room404.save.v1";
 
 const initialState: GameState = {
-  schemaVersion: 9,
+  schemaVersion: 10,
   chapter: 1,
   currentRouteId: "ARCHIVE_HOME",
   fakeUrl: "/",
   searchQuery: "",
+  unlockedTextEntryIds: [],
+  readTextEntryIds: [],
+  solvedDeductionIds: [],
+  deductionAttempts: {},
+  activeLeadId: "chapter1_date_conflict",
   events: [],
   evidenceIds: [],
   knowledgeIds: [],
@@ -105,6 +111,8 @@ const initialState: GameState = {
 type Action =
   | { type: "NAVIGATE"; payload: NavigatePayload }
   | { type: "SEARCH"; query: string }
+  | { type: "READ_TEXT_ENTRY"; entryId: string }
+  | { type: "SUBMIT_DEDUCTION"; caseId: string; answerId: string; evidenceIds: string[] }
   | { type: "RECOVER_FORUM_FRAGMENT"; fragmentId: string }
   | { type: "MARK_FORUM_QUOTES_SEEN" }
   | { type: "ASSEMBLE_FORUM_THREAD_1847" }
@@ -170,6 +178,8 @@ interface GameStoreValue {
   lastSavedAt: string;
   navigate: (payload: NavigatePayload) => void;
   search: (query: string) => void;
+  readTextEntry: (entryId: string) => void;
+  submitDeduction: (caseId: string, answerId: string, evidenceIds: string[]) => void;
   recoverForumFragment: (fragmentId: string) => void;
   markForumQuotesSeen: () => void;
   assembleForumThread1847: () => void;
@@ -261,8 +271,22 @@ function reduceState(state: GameState, action: Action): GameState {
   if (action.type === "START_NEW_GAME_PLUS") {
     if (!state.resolutionApplied || !state.endingId) return state;
     const carriedNotes = action.mode === "notes"
-      ? { evidenceIds: state.evidenceIds, knowledgeIds: state.knowledgeIds }
-      : { evidenceIds: initialState.evidenceIds, knowledgeIds: initialState.knowledgeIds };
+      ? {
+        evidenceIds: state.evidenceIds,
+        knowledgeIds: state.knowledgeIds,
+        unlockedTextEntryIds: state.unlockedTextEntryIds,
+        readTextEntryIds: state.readTextEntryIds,
+        solvedDeductionIds: state.solvedDeductionIds,
+        deductionAttempts: state.deductionAttempts,
+      }
+      : {
+        evidenceIds: initialState.evidenceIds,
+        knowledgeIds: initialState.knowledgeIds,
+        unlockedTextEntryIds: initialState.unlockedTextEntryIds,
+        readTextEntryIds: initialState.readTextEntryIds,
+        solvedDeductionIds: initialState.solvedDeductionIds,
+        deductionAttempts: initialState.deductionAttempts,
+      };
     return {
       ...initialState,
       ...carriedNotes,
@@ -304,6 +328,53 @@ function reduceState(state: GameState, action: Action): GameState {
       },
       "ARCHIVE_SEARCH",
     );
+  }
+
+  if (action.type === "READ_TEXT_ENTRY") {
+    if (state.readTextEntryIds.includes(action.entryId)) return state;
+    return {
+      ...state,
+      unlockedTextEntryIds: addUnique(state.unlockedTextEntryIds, action.entryId),
+      readTextEntryIds: addUnique(state.readTextEntryIds, action.entryId),
+      events: [
+        ...state.events,
+        makeEvent("TEXT_ARCHIVE_READ", {
+          routeId: "ARCHIVE_SEARCH",
+          target: action.entryId,
+        }),
+      ],
+    };
+  }
+
+  if (action.type === "SUBMIT_DEDUCTION") {
+    const caseDef = getDeductionCase(action.caseId);
+    if (!caseDef || state.chapter < caseDef.chapter || state.solvedDeductionIds.includes(caseDef.id)) return state;
+
+    const status = evaluateDeduction(caseDef, action.answerId, action.evidenceIds);
+    const attempts = {
+      ...state.deductionAttempts,
+      [caseDef.id]: (state.deductionAttempts[caseDef.id] ?? 0) + 1,
+    };
+    const eventType = status === "correct" ? "DEDUCTION_SOLVED" : "DEDUCTION_ATTEMPT";
+    const event = makeEvent(eventType, {
+      routeId: state.currentRouteId,
+      target: `${caseDef.id}:${action.answerId}:${status}`,
+    });
+    const nextState: GameState = {
+      ...state,
+      deductionAttempts: attempts,
+      events: [...state.events, event],
+    };
+
+    if (status !== "correct") return nextState;
+
+    return {
+      ...nextState,
+      solvedDeductionIds: addUnique(nextState.solvedDeductionIds, caseDef.id),
+      unlockedTextEntryIds: addUniqueMany(nextState.unlockedTextEntryIds, caseDef.unlockTextEntryIds),
+      knowledgeIds: addUniqueMany(nextState.knowledgeIds, caseDef.successKnowledgeIds),
+      activeLeadId: getNextDeductionCaseId(caseDef.id, nextState.solvedDeductionIds),
+    };
   }
 
   if (action.type === "RECOVER_FORUM_FRAGMENT") {
@@ -1591,14 +1662,19 @@ function loadSave(): GameState {
 
   try {
     const save = JSON.parse(raw) as Partial<GameState>;
-    if (![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(save.schemaVersion ?? 0)) {
+    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(save.schemaVersion ?? 0)) {
       return initialState;
     }
 
     const hydrated: GameState = {
       ...initialState,
       ...save,
-      schemaVersion: 9,
+      schemaVersion: 10,
+      unlockedTextEntryIds: save.unlockedTextEntryIds ?? [],
+      readTextEntryIds: save.readTextEntryIds ?? [],
+      solvedDeductionIds: save.solvedDeductionIds ?? [],
+      deductionAttempts: save.deductionAttempts ?? {},
+      activeLeadId: save.activeLeadId ?? "chapter1_date_conflict",
       visitCounts: save.visitCounts ?? {},
       events: save.events ?? [],
       evidenceIds: save.evidenceIds ?? [],
@@ -1651,6 +1727,14 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
 
   const search = useCallback((query: string) => {
     dispatch({ type: "SEARCH", query });
+  }, []);
+
+  const readTextEntry = useCallback((entryId: string) => {
+    dispatch({ type: "READ_TEXT_ENTRY", entryId });
+  }, []);
+
+  const submitDeduction = useCallback((caseId: string, answerId: string, evidenceIds: string[]) => {
+    dispatch({ type: "SUBMIT_DEDUCTION", caseId, answerId, evidenceIds });
   }, []);
 
   const recoverForumFragment = useCallback((fragmentId: string) => {
@@ -1776,6 +1860,8 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
       lastSavedAt,
       navigate,
       search,
+      readTextEntry,
+      submitDeduction,
       recoverForumFragment,
       markForumQuotesSeen,
       assembleForumThread1847,
@@ -1894,6 +1980,8 @@ export function GameStoreProvider({ children }: { children: ReactNode }) {
       reset,
       saveStatus,
       search,
+      readTextEntry,
+      submitDeduction,
       state,
       lastSavedAt,
     ],

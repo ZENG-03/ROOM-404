@@ -7,11 +7,11 @@ const store = fs.readFileSync(path.join(root, "src/game/engine/GameStore.tsx"), 
 const issues = [];
 
 if (!store.includes('const SAVE_KEY = "room404.save.v1"')) issues.push("SAVE_KEY is missing or changed unexpectedly.");
-if (!store.includes("schemaVersion: 9")) issues.push("Initial save schema must be version 9.");
-for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+if (!store.includes("schemaVersion: 10")) issues.push("Initial save schema must be version 10.");
+for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
   if (!store.includes(String(version))) issues.push(`Save migration list does not mention schema ${version}.`);
 }
-for (const field of ["visitCounts", "evidenceIds", "knowledgeIds", "events", "seenEndingIds", "achievementsUnlocked"]) {
+for (const field of ["visitCounts", "evidenceIds", "knowledgeIds", "events", "seenEndingIds", "achievementsUnlocked", "unlockedTextEntryIds", "readTextEntryIds", "solvedDeductionIds", "deductionAttempts", "activeLeadId"]) {
   if (!store.includes(`${field}: save.${field} ??`)) issues.push(`Save hydration is missing ${field}.`);
 }
 if (!store.includes("localStorage.setItem(SAVE_KEY")) issues.push("State is not persisted to localStorage.");
