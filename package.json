@@ -1,0 +1,28 @@
+{
+  "name": "room-404",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "qa:routes": "node scripts/route-qa.mjs",
+    "qa:canon": "node scripts/canon-lint.mjs",
+    "qa:save": "node scripts/save-qa.mjs",
+    "qa:endings": "node scripts/ending-qa.mjs",
+    "qa": "npm run qa:routes && npm run qa:canon && npm run qa:save && npm run qa:endings"
+  },
+  "dependencies": {
+    "lucide-react": "^1.33.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.5.4",
+    "vite": "^7.0.0"
+  }
+}
