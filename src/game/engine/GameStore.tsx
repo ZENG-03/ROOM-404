@@ -5,11 +5,12 @@ import { calculateAnomalyLevel } from "./AnomalyEngine";
 import { calculateUnknownStage } from "./UnknownEngine";
 import { getNewAchievementIds } from "./AchievementEngine";
 import { evaluateDeduction, getDeductionCase, getNextDeductionCaseId } from "../../story/deductions";
+import { investigationNodes, investigationOperations, sideCases } from "../../story/investigation";
 
 const SAVE_KEY = "room404.save.v1";
 
 const initialState: GameState = {
-  schemaVersion: 10,
+  schemaVersion: 11,
   chapter: 1,
   currentRouteId: "ARCHIVE_HOME",
   fakeUrl: "/",
@@ -19,6 +20,9 @@ const initialState: GameState = {
   solvedDeductionIds: [],
   deductionAttempts: {},
   activeLeadId: "chapter1_date_conflict",
+  investigationNodeIds: [],
+  completedOperationIds: [],
+  unlockedSideCaseIds: [],
   events: [],
   evidenceIds: [],
   knowledgeIds: [],
@@ -243,13 +247,78 @@ interface GameStoreValue {
 const GameStoreContext = createContext<GameStoreValue | undefined>(undefined);
 
 function reducer(state: GameState, action: Action): GameState {
-  const next = reduceState(state, action);
+  const next = reconcileInvestigationProgress(reduceState(state, action));
   const anomalyLevel = calculateAnomalyLevel(next);
   const unknownStage = calculateUnknownStage(next, anomalyLevel);
   const achievementIds = addUniqueMany(next.achievementsUnlocked ?? [], getNewAchievementIds(next));
   const hasAchievementChanges = achievementIds.length !== (next.achievementsUnlocked ?? []).length;
   if (next.anomalyLevel === anomalyLevel && next.unknownStage === unknownStage && !hasAchievementChanges) return next;
   return { ...next, anomalyLevel, unknownStage, achievementsUnlocked: achievementIds };
+}
+
+function reconcileInvestigationProgress(state: GameState): GameState {
+  let next = state;
+  const completedNodeIds = investigationNodes.filter((node) => node.complete(state)).map((node) => node.id);
+  const newlyCompletedNodeIds = completedNodeIds.filter((id) => !(state.investigationNodeIds ?? []).includes(id));
+
+  if (newlyCompletedNodeIds.length > 0) {
+    next = {
+      ...next,
+      investigationNodeIds: addUniqueMany(next.investigationNodeIds ?? [], newlyCompletedNodeIds),
+      events: [
+        ...next.events,
+        ...newlyCompletedNodeIds.map((id) => {
+          const node = investigationNodes.find((item) => item.id === id);
+          return makeEvent("INVESTIGATION_NODE_COMPLETE", {
+            routeId: node?.routeId ?? "ARCHIVE_HOME",
+            target: id,
+          });
+        }),
+      ],
+    };
+  }
+
+  const knownNodeIds = new Set([...(next.investigationNodeIds ?? []), ...completedNodeIds]);
+  const unlockedSideCaseIds = sideCases
+    .filter((item) => knownNodeIds.has(item.unlockAfter) || next.chapter > item.chapter)
+    .map((item) => item.id);
+  const newlyUnlockedSideCaseIds = unlockedSideCaseIds.filter((id) => !(state.unlockedSideCaseIds ?? []).includes(id));
+
+  if (newlyUnlockedSideCaseIds.length > 0) {
+    next = {
+      ...next,
+      unlockedSideCaseIds: addUniqueMany(next.unlockedSideCaseIds ?? [], newlyUnlockedSideCaseIds),
+      events: [
+        ...next.events,
+        ...newlyUnlockedSideCaseIds.map((id) => {
+          const sideCase = sideCases.find((item) => item.id === id);
+          return makeEvent("SIDE_CASE_UNLOCK", {
+            routeId: sideCase?.routeId ?? "ARCHIVE_HOME",
+            target: id,
+          });
+        }),
+      ],
+    };
+  }
+
+  const completedOperationIds = investigationOperations.filter((operation) => operation.complete(state)).map((operation) => operation.id);
+  const newlyCompletedOperationIds = completedOperationIds.filter((id) => !(state.completedOperationIds ?? []).includes(id));
+
+  if (newlyCompletedOperationIds.length > 0) {
+    next = {
+      ...next,
+      completedOperationIds: addUniqueMany(next.completedOperationIds ?? [], newlyCompletedOperationIds),
+      events: [
+        ...next.events,
+        ...newlyCompletedOperationIds.map((id) => makeEvent("SYSTEM_OPERATION", {
+          routeId: id.startsWith("operation:recovery") || id.startsWith("operation:memory") || id.startsWith("operation:mount") || id.startsWith("operation:calendar") ? "RECOVERY_DESKTOP" : "ROOM_HISTORY",
+          target: id,
+        })),
+      ],
+    };
+  }
+
+  return next;
 }
 
 function reduceState(state: GameState, action: Action): GameState {
@@ -278,6 +347,9 @@ function reduceState(state: GameState, action: Action): GameState {
         readTextEntryIds: state.readTextEntryIds,
         solvedDeductionIds: state.solvedDeductionIds,
         deductionAttempts: state.deductionAttempts,
+        investigationNodeIds: state.investigationNodeIds,
+        completedOperationIds: state.completedOperationIds,
+        unlockedSideCaseIds: state.unlockedSideCaseIds,
       }
       : {
         evidenceIds: initialState.evidenceIds,
@@ -286,6 +358,9 @@ function reduceState(state: GameState, action: Action): GameState {
         readTextEntryIds: initialState.readTextEntryIds,
         solvedDeductionIds: initialState.solvedDeductionIds,
         deductionAttempts: initialState.deductionAttempts,
+        investigationNodeIds: initialState.investigationNodeIds,
+        completedOperationIds: initialState.completedOperationIds,
+        unlockedSideCaseIds: initialState.unlockedSideCaseIds,
       };
     return {
       ...initialState,
@@ -1662,19 +1737,22 @@ function loadSave(): GameState {
 
   try {
     const save = JSON.parse(raw) as Partial<GameState>;
-    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(save.schemaVersion ?? 0)) {
+    if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(save.schemaVersion ?? 0)) {
       return initialState;
     }
 
     const hydrated: GameState = {
       ...initialState,
       ...save,
-      schemaVersion: 10,
+      schemaVersion: 11,
       unlockedTextEntryIds: save.unlockedTextEntryIds ?? [],
       readTextEntryIds: save.readTextEntryIds ?? [],
       solvedDeductionIds: save.solvedDeductionIds ?? [],
       deductionAttempts: save.deductionAttempts ?? {},
       activeLeadId: save.activeLeadId ?? "chapter1_date_conflict",
+      investigationNodeIds: save.investigationNodeIds ?? [],
+      completedOperationIds: save.completedOperationIds ?? [],
+      unlockedSideCaseIds: save.unlockedSideCaseIds ?? [],
       visitCounts: save.visitCounts ?? {},
       events: save.events ?? [],
       evidenceIds: save.evidenceIds ?? [],
@@ -1694,8 +1772,9 @@ function loadSave(): GameState {
       seenEndingIds: save.seenEndingIds ?? [],
       achievementsUnlocked: save.achievementsUnlocked ?? [],
     };
-    const anomalyLevel = calculateAnomalyLevel(hydrated);
-    return { ...hydrated, anomalyLevel, unknownStage: calculateUnknownStage(hydrated, anomalyLevel) };
+    const progressed = reconcileInvestigationProgress(hydrated);
+    const anomalyLevel = calculateAnomalyLevel(progressed);
+    return { ...progressed, anomalyLevel, unknownStage: calculateUnknownStage(progressed, anomalyLevel) };
   } catch {
     return initialState;
   }

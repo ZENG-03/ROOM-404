@@ -171,6 +171,9 @@ export interface GameEvent {
     | "TEXT_ARCHIVE_READ"
     | "DEDUCTION_ATTEMPT"
     | "DEDUCTION_SOLVED"
+    | "INVESTIGATION_NODE_COMPLETE"
+    | "SIDE_CASE_UNLOCK"
+    | "SYSTEM_OPERATION"
     | "CHAPTER_COMPLETE";
   createdAt: string;
   routeId?: RouteId;
@@ -274,6 +277,9 @@ export interface GameState {
   solvedDeductionIds: string[];
   deductionAttempts: Record<string, number>;
   activeLeadId: string;
+  investigationNodeIds: string[];
+  completedOperationIds: string[];
+  unlockedSideCaseIds: string[];
   events: GameEvent[];
   evidenceIds: string[];
   knowledgeIds: string[];

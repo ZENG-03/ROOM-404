@@ -75,6 +75,7 @@ import { LegacySiteShell } from "../legacy/LegacySiteShell";
 import { MediaSlot } from "../media/MediaSlot";
 import { deductionCases } from "../../story/deductions";
 import { filterTextEntries, getTextEntryStatus, isTextEntryUnlocked, loadTextArchive } from "../../story/textArchive";
+import { getInvestigationNodeStatus, getInvestigationProgress, investigationNodes, investigationOperations, sideCases } from "../../story/investigation";
 
 const linxiaNav: Array<[string, string]> = [
   ["About Me", "/site/2007/linxia"],
@@ -335,7 +336,17 @@ function ArchiveHome() {
   const { state, search, navigate } = useGameStore();
   const [query, setQuery] = useState("");
   const captureCount = state.viewedCaptures.filter((capture) => ["20070815", "20070819"].includes(capture)).length;
-  const completedChapter = state.chapter5Complete ? 5 : state.chapter4Complete ? 4 : state.chapter3Complete ? 3 : state.chapter2Complete ? 2 : state.chapter1Complete ? 1 : 0;
+  const completedChapter = state.resolutionApplied ? 6 : state.chapter5Complete ? 5 : state.chapter4Complete ? 4 : state.chapter3Complete ? 3 : state.chapter2Complete ? 2 : state.chapter1Complete ? 1 : 0;
+  const investigation = getInvestigationProgress(state);
+  const activeNode = investigation.activeNode;
+  const chapterStops: Array<{ chapter: number; title: string; subtitle: string; path: string; routeId: ReturnType<typeof resolveNavigation>["routeId"] }> = [
+    { chapter: 1, title: "日期冲突", subtitle: "校园公告 / 2007", path: "/site/2003/nc2ms", routeId: "SCHOOL_HOME" },
+    { chapter: 2, title: "Summer17", subtitle: "BlueMoon / Session", path: "/archive/forum/bluemoon", routeId: "BLUEMOON_ARCHIVE" },
+    { chapter: 3, title: "Photo17", subtitle: "版本来源 / DSC0417", path: "/photo/forensics/DSC0417", routeId: "PHOTO17_FORENSICS" },
+    { chapter: 4, title: "Recovery", subtitle: "Shell / Raw View", path: "/recovery/boot", routeId: "RECOVERY_BOOT" },
+    { chapter: 5, title: "Continuity", subtitle: "ROOM / Observer405", path: "/service/continuity", routeId: "CONTINUITY_SERVICE" },
+    { chapter: 6, title: "Resolution", subtitle: "来源边界 / 结局", path: "/resolution/review", routeId: "FINAL_REVIEW" },
+  ];
 
   if (state.resolutionApplied && state.endingId) return <PostEndingArchive endingId={state.endingId} />;
 
@@ -349,16 +360,82 @@ function ArchiveHome() {
     if (!state.evidenceIds.includes("E014_private_0817")) return search("Old District Node 7");
     if (!state.backup403Seen) return navigate(resolveNavigation("/site/2007/linxia/0817/backup/backup_20070823.zip"));
     if (!state.chapter2Complete) return navigate(resolveNavigation("/archive/forum/bluemoon"));
-    navigate(resolveNavigation("/photo/forensics/DSC0417"));
+    if (!state.chapter3Complete) return navigate(resolveNavigation("/photo/forensics/DSC0417"));
+    if (!state.chapter4Complete) return navigate(resolveNavigation("/recovery/boot"));
+    if (!state.chapter5Complete) return navigate(resolveNavigation("/service/continuity"));
+    if (!state.finalReviewComplete) return navigate(resolveNavigation("/resolution/review"));
+    navigate(resolveNavigation("/resolution"));
   }
 
   return (
-    <article className="archive-page">
-      <header className="archive-hero">
-        <p className="eyebrow">Public Web Snapshot Index</p>
-        <h1>ROOM Archive</h1>
-        <p>检索历史网页快照、旧站点与公开缓存记录。</p>
+    <article className="archive-page archive-case-home">
+      <header className="case-console-header">
+        <div className="case-console-topline"><span>ROOM 404</span><strong>CASE FILE 01 / ACTIVE</strong><span className="case-signal"><i /> LIVE SESSION</span></div>
+        <div className="case-hero-grid">
+          <div className="case-hero-copy">
+            <p className="eyebrow">PUBLIC WEB SNAPSHOT INDEX / ENTRY POINT</p>
+            <h1>8月17日，学校公告为什么改了日期？</h1>
+            <p className="case-hero-summary">从南城二中的两份旧网页快照开始，追踪一条被修改、被删除、又被恢复的来源链。你不需要相信任何单一页面，只需要把它们放回正确的时间里。</p>
+            <div className="case-action-row">
+              <button className="case-primary-action" type="button" onClick={resumeInvestigation}><span>PRIMARY LEAD</span><strong>{state.resolutionApplied ? "重新检查 Resolution" : "开始调查"}</strong><ArrowRight aria-hidden="true" /></button>
+              <button className="case-secondary-action" type="button" onClick={() => navigate(resolveNavigation("/evidence/graph"))}><Network aria-hidden="true" />证据图谱</button>
+              <button className="case-secondary-action" type="button" onClick={() => navigate(resolveNavigation("/search"))}><Search aria-hidden="true" />进入 Archive</button>
+            </div>
+          </div>
+          <aside className="case-console-readout" aria-label="Case status">
+            <div><span>CASE STATUS</span><strong>{state.resolutionApplied ? "RECORDED" : "INVESTIGATING"}</strong></div>
+            <div><span>CHAPTER</span><strong>{String(state.chapter).padStart(2, "0")} / 06</strong></div>
+            <div><span>NODE FILES</span><strong>{investigation.completedNodes.length} / {investigation.totalNodes}</strong></div>
+            <div><span>SIDE LEADS</span><strong>{investigation.unlockedSides.length} / {sideCases.length}</strong></div>
+            <div><span>SYSTEM OPS</span><strong>{investigation.completedOperations.length} / {investigation.totalOperations}</strong></div>
+            <p>所有记录保留来源类型。Generated 不会自动成为历史事实。</p>
+          </aside>
+        </div>
       </header>
+
+      <section className="case-loop-strip" aria-label="Investigation loop">
+        <span><b>01</b> 找到来源</span><i>→</i><span><b>02</b> 比较版本</span><i>→</i><span><b>03</b> 提交判断</span><i>→</i><span><b>04</b> 解锁下一条线索</span>
+      </section>
+
+      <section className="case-objective-board">
+        <div className="case-objective-main">
+          <div className="section-kicker"><span>CURRENT OBJECTIVE</span><strong>{activeNode ? activeNode.code : "ARCHIVE"}</strong></div>
+          <h2>{activeNode?.title ?? "案件来源链已闭合"}</h2>
+          <p>{activeNode?.objective ?? "你已经完成当前主线。可以回看支线档案、证据图谱或进入结局画廊。"}</p>
+          <div className="case-objective-meta"><span>{activeNode?.sourceType ?? "SYSTEM"}</span><small>{activeNode?.hint ?? "Source archive remains available for review."}</small></div>
+          {activeNode && <button type="button" className="case-objective-link" onClick={() => navigate(resolveNavigation(activeNode.routePath))}>打开当前来源 <ArrowRight aria-hidden="true" /></button>}
+        </div>
+        <div className="case-note-paper">
+          <span>调查笔记 / 001</span>
+          <p>不要先问“她是不是林夏”。</p>
+          <p>先问：这条记录是什么时候、由谁、以什么来源留下的？</p>
+          <strong>{investigation.completedNodes.length} 条调查节点已记录</strong>
+        </div>
+      </section>
+
+      <section className="case-source-board" aria-label="Starter sources">
+        <header><div><span className="section-kicker">STARTER SOURCES</span><h2>从三份来源开始</h2></div><small>每一张卡片都是真实可访问的 Archive 对象</small></header>
+        <div className="case-source-grid">
+          {[
+            ["ORIGINAL", "2007-08-15 公告", "活动日期首次出现的原始快照。", "/archive/20070815/nc2ms.edu/photo-event", "SCHOOL_NOTICE_V1"],
+            ["ALTERED", "2007-08-19 公告", "页面后来显示了另一个日期。", "/archive/20070819/nc2ms.edu/photo-event", "SCHOOL_NOTICE_V2"],
+            ["RESTRICTED", "0817 / backup object", "一个不能直接解释自己的受限对象。", "/site/2007/linxia/0817/backup/backup_20070823.zip", "LINXIA_BACKUP_ZIP"],
+          ].map(([type, title, summary, path, routeId]) => <button key={path} className={`case-source-card source-card-${type.toLowerCase()}`} type="button" onClick={() => navigate(resolveNavigation(path))}>
+            <span>{type}</span><strong>{title}</strong><p>{summary}</p><small>{routeId} <ArrowRight aria-hidden="true" /></small>
+          </button>)}
+        </div>
+      </section>
+
+      <section className="case-chapter-rail" aria-label="Chapter investigation map">
+        <header><div><span className="section-kicker">INVESTIGATION MAP</span><h2>六个来源层，逐层打开</h2></div><small>{investigation.completedNodes.length}/{investigation.totalNodes} nodes recorded</small></header>
+        <div className="case-chapter-grid">
+          {chapterStops.map((stop) => {
+            const done = stop.chapter < state.chapter || (stop.chapter === 1 && state.chapter1Complete) || (stop.chapter === 2 && state.chapter2Complete) || (stop.chapter === 3 && state.chapter3Complete) || (stop.chapter === 4 && state.chapter4Complete) || (stop.chapter === 5 && state.chapter5Complete) || (stop.chapter === 6 && state.resolutionApplied);
+            const locked = stop.chapter > state.chapter && !done;
+            return <button key={stop.chapter} type="button" className={`case-chapter-card ${done ? "complete" : ""} ${locked ? "locked" : "active"}`} disabled={locked} onClick={() => navigate(resolveNavigation(stop.path))}><span>CH{String(stop.chapter).padStart(2, "0")}</span><strong>{done ? <CheckCircle2 aria-hidden="true" /> : locked ? <LockKeyhole aria-hidden="true" /> : <Circle aria-hidden="true" />}{stop.title}</strong><small>{stop.subtitle}</small></button>;
+          })}
+        </div>
+      </section>
 
       <form className="archive-search" onSubmit={submit}>
         <input
@@ -619,7 +696,9 @@ function ArchiveSearch() {
 function TextArchiveReader({ entry, state, onOpenEntry }: { entry: TextArchiveEntry; state: ReturnType<typeof useGameStore>["state"]; onOpenEntry: (entryId?: string) => void }) {
   const unlocked = isTextEntryUnlocked(entry, state);
   const paragraphs = entry.body.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
-  const chapterUnlock = entry.unlockCondition.match(/^chapter:(\\d+)$/);\n  const lockMessage = chapterUnlock ? `完成 Chapter ${chapterUnlock[1]} 并保留来源边界后开放。` : "完成相关章节推理后开放。";\n  return <article className={`text-archive-reader-content ${unlocked ? "unlocked" : "locked"}`}><header><span>TEXT ARCHIVE / CH{entry.chapter}</span><strong>{entry.heading}</strong><small>{entry.sourceType} · line {entry.lineStart} · {entry.section}</small></header>{unlocked ? <>{paragraphs.map((paragraph, index) => <p key={`${entry.id}-${index}`}>{paragraph}</p>)}<div className="text-archive-meta"><span>RELATED EVIDENCE</span><strong>{entry.relatedEvidenceIds.length ? entry.relatedEvidenceIds.join(" / ") : "NONE INDEXED"}</strong><span>TAGS</span><strong>{entry.tags.join(" / ")}</strong></div></> : <div className="text-archive-lock"><LockKeyhole aria-hidden="true" /><strong>档案尚未解锁。</strong><p>{lockMessage}</p><button type="button" onClick={() => onOpenEntry()}>返回档案列表</button></div>}</article>;
+  const chapterNumber = entry.unlockCondition.match(/^chapter:(\d+)$/)?.[1];
+  const lockMessage = chapterNumber ? `完成 Chapter ${chapterNumber} 并保留来源边界后开放。` : "完成相关章节推理后开放。";
+  return <article className={`text-archive-reader-content ${unlocked ? "unlocked" : "locked"}`}><header><span>TEXT ARCHIVE / CH{entry.chapter}</span><strong>{entry.heading}</strong><small>{entry.sourceType} · line {entry.lineStart} · {entry.section}</small></header>{unlocked ? <>{paragraphs.map((paragraph, index) => <p key={`${entry.id}-${index}`}>{paragraph}</p>)}<div className="text-archive-meta"><span>RELATED EVIDENCE</span><strong>{entry.relatedEvidenceIds.length ? entry.relatedEvidenceIds.join(" / ") : "NONE INDEXED"}</strong><span>TAGS</span><strong>{entry.tags.join(" / ")}</strong></div></> : <div className="text-archive-lock"><LockKeyhole aria-hidden="true" /><strong>档案尚未解锁。</strong><p>{lockMessage}</p><button type="button" onClick={() => onOpenEntry()}>返回档案列表</button></div>}</article>;
 }
 
 const blueMoonReferenceResults = [

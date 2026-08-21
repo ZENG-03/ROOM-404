@@ -7,6 +7,7 @@ import { resolveNavigation } from "../../game/navigation/NavigationService";
 import { routes } from "../../game/navigation/RouteRegistry";
 import { allEvidence } from "../../story/evidenceRegistry";
 import { deductionCases, evaluateDeduction, type DeductionEvaluationStatus } from "../../story/deductions";
+import { getInvestigationNodeStatus, getInvestigationProgress, investigationNodes, investigationOperations, sideCases } from "../../story/investigation";
 import { getUiTheme } from "../../ui/theme";
 
 const knowledgeLabels: Record<string, string> = {
@@ -92,7 +93,7 @@ const identityClueLabels: Record<string, string> = {
   camera: "Sony 小卡片机使用记录",
 };
 
-type WorkspaceTab = "evidence" | "knowledge" | "progress" | "deductions";
+type WorkspaceTab = "evidence" | "knowledge" | "progress" | "deductions" | "objectives" | "sideCases";
 
 interface EvidencePanelProps {
   open: boolean;
@@ -121,6 +122,7 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
   const filteredKnowledge = state.knowledgeIds.filter((id) => !normalizedQuery || (knowledgeLabels[id] ?? id).toLocaleLowerCase().includes(normalizedQuery));
   const theme = getUiTheme(state.currentRouteId, state.chapter);
   const pendingRelations = buildEvidenceGraph(state).edges.filter((edge) => !edge.known).length;
+  const investigation = getInvestigationProgress(state);
 
   const sessionLabel = state.resolutionApplied
     ? `${state.endingId} Recorded`
@@ -174,6 +176,8 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
         <button type="button" className={tab === "knowledge" ? "active" : ""} aria-pressed={tab === "knowledge"} onClick={() => setTab("knowledge")}><Brain aria-hidden="true" /><span>Knowledge</span><small>{state.knowledgeIds.length}</small></button>
         <button type="button" className={tab === "progress" ? "active" : ""} aria-pressed={tab === "progress"} onClick={() => setTab("progress")}><ListChecks aria-hidden="true" /><span>Progress</span><small>CH{String(state.chapter).padStart(2, "0")}</small></button>
         <button type="button" className={tab === "deductions" ? "active" : ""} aria-pressed={tab === "deductions"} onClick={() => setTab("deductions")}><GitBranch aria-hidden="true" /><span>Deductions</span><small>{state.solvedDeductionIds.length}/{deductionCases.length}</small></button>
+        <button type="button" className={tab === "objectives" ? "active" : ""} aria-pressed={tab === "objectives"} onClick={() => setTab("objectives")}><ListChecks aria-hidden="true" /><span>Objectives</span><small>{investigation.completedNodes.length}/{investigation.totalNodes}</small></button>
+        <button type="button" className={tab === "sideCases" ? "active" : ""} aria-pressed={tab === "sideCases"} onClick={() => setTab("sideCases")}><Search aria-hidden="true" /><span>Side Cases</span><small>{investigation.unlockedSides.length}</small></button>
       </nav>
 
       {(tab === "evidence" || tab === "knowledge") && (
@@ -207,6 +211,12 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
           <section className="workspace-view progress-view" aria-label="Investigation progress">
             <div className="session-snapshot"><span>Current route</span><strong>{state.fakeUrl}</strong><span>Archive events</span><strong>{state.events.length}</strong></div>
 
+            <ProgressGroup
+              title="System Operations"
+              summary={`${investigation.completedOperations.length}/${investigation.totalOperations} recorded`}
+              items={investigationOperations.map((operation) => `${operation.label}: ${investigation.completedOperations.some((item) => item.id === operation.id) ? "complete" : "pending"}`)}
+            />
+
             {state.chapter === 2 && <ProgressGroup title="Identity Check" summary={`Summer17 / Linxia: ${state.identityClueIds.length}/4 independent clues`} items={state.identityClueIds.map((id) => identityClueLabels[id] ?? id)} />}
             {state.chapter === 3 && <ProgressGroup title="Provenance" summary={`Comparisons: ${state.photo17ComparePairs.length}/4`} items={[`Original hash: ${state.photo17ClubHashVerified ? "verified" : "pending"}`, `Difference map: ${state.photo17DifferenceMapSeen ? "reviewed" : "pending"}`, `Session log: ${state.photo17SessionHistorySeen ? "saved" : "pending"}`]} />}
             {state.chapter === 4 && <ProgressGroup title="Recovery" summary={`Apps opened: ${state.recoveryOpenedAppIds.length}/9`} items={[`Environment build: ${state.recoveryInfoSeen ? "verified" : "pending"}`, `Observer calendar: ${state.recoveryCalendarSessionSeen ? "seen" : "pending"}`, `Memory graph: ${state.recoveryMemoryStatusSeen ? "inspected" : "pending"}`, `Raw source view: ${state.recoveryRawViewSeen ? "mounted" : "optional"}`, `Unknown source: ${state.recoveryUnknownSourceSeen ? "verified" : "pending"}`, `Unknown stage: ${state.unknownStage}`, `Anomaly level: ${state.anomalyLevel}`, `Source files: ${state.recoveryFileIdsSeen.length} read`, `Deleted objects: ${state.recoveryRecycleItemIdsSeen.length} inspected`, `Recovered audio: ${state.recoveryPlayerTrackIdsPlayed.length} played`]} />}
@@ -218,6 +228,8 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
         )}
 
         {tab === "deductions" && <DeductionsView state={state} navigate={navigate} submitDeduction={submitDeduction} />}
+        {tab === "objectives" && <ObjectivesView state={state} navigate={navigate} />}
+        {tab === "sideCases" && <SideCasesView state={state} navigate={navigate} />}
       </div>
 
       <footer className="workspace-footer">
@@ -229,6 +241,29 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
 
 function ProgressGroup({ title, summary, items }: { title: string; summary?: string; items: string[] }) {
   return <section className="progress-group"><h2>{title}</h2>{summary && <p className="identity-progress">{summary}</p>}<ul className="knowledge-list">{items.map((item) => <li key={item}>{item}</li>)}</ul></section>;
+}
+
+function ObjectivesView({ state, navigate }: { state: GameState; navigate: (payload: ReturnType<typeof resolveNavigation>) => void }) {
+  const progress = getInvestigationProgress(state);
+  return <section className="workspace-view objective-view" aria-label="Investigation objectives">
+    <header className="objective-heading"><span>CASE BOARD / MAINLINE</span><strong>{progress.completedNodes.length} / {progress.totalNodes} recorded</strong><p>访问来源、完成已有页面操作后，节点会自动记录到 Session。</p></header>
+    <div className="objective-list">{investigationNodes.map((node) => {
+      const status = getInvestigationNodeStatus(node, state);
+      return <button key={node.id} type="button" className={`objective-item ${status}`} disabled={status === "locked"} onClick={() => navigate(resolveNavigation(node.routePath))}><span>{node.code}</span><div><strong>{node.title}</strong><small>{node.objective}</small></div><em>{status === "complete" ? "RECORDED" : status === "available" ? "OPEN" : "LOCKED"}</em></button>;
+    })}</div>
+  </section>;
+}
+
+function SideCasesView({ state, navigate }: { state: GameState; navigate: (payload: ReturnType<typeof resolveNavigation>) => void }) {
+  const unlocked = new Set(state.unlockedSideCaseIds ?? []);
+  return <section className="workspace-view side-case-view" aria-label="Side investigation cases">
+    <header className="objective-heading"><span>CASE BOARD / OPTIONAL</span><strong>{unlocked.size} / {sideCases.length} unlocked</strong><p>支线不会阻断主线，但可能提供额外来源、成就和 Resolution 依据。</p></header>
+    <div className="objective-list">{sideCases.map((item) => {
+      const available = unlocked.has(item.id);
+      const complete = item.complete(state);
+      return <button key={item.id} type="button" className={`objective-item ${complete ? "complete" : available ? "available" : "locked"}`} disabled={!available} onClick={() => navigate(resolveNavigation(item.routePath))}><span>CH{item.chapter}</span><div><strong>{item.title}</strong><small>{available ? item.premise : "完成对应主线节点后开放。"}</small></div><em>{complete ? "VISITED" : available ? "OPEN" : "LOCKED"}</em></button>;
+    })}</div>
+  </section>;
 }
 
 function DeductionsView({ state, navigate, submitDeduction }: { state: GameState; navigate: (payload: ReturnType<typeof resolveNavigation>) => void; submitDeduction: (caseId: string, answerId: string, evidenceIds: string[]) => void }) {
