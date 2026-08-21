@@ -1,6 +1,6 @@
 import type { AssetId, MediaAsset } from "../../game/types";
 
-const PHOTO_ROOT = "/assets/photos";
+const PHOTO_ROOT = `${import.meta.env.BASE_URL}assets/photos`;
 
 function photoCandidates(stem: string): string[] {
   return ["jpg", "png", "webp", "jpeg"].map((extension) => `${PHOTO_ROOT}/${stem}.${extension}`);
@@ -162,3 +162,4 @@ export function resolvePhoto17Asset(visitCount: number): MediaAsset {
 
   return mediaAssets.photo17_web_v2;
 }
+
