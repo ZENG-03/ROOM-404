@@ -125,3 +125,8 @@ export const deductionCases: DeductionCase[] = [
 export function getDeductionCase(caseId: string): DeductionCase | undefined {
   return deductionCases.find((item) => item.id === caseId);
 }
+export function getNextDeductionCaseId(caseId: string, solvedIds: string[] = []): string {
+  const currentIndex = deductionCases.findIndex((item) => item.id === caseId);
+  const candidates = currentIndex >= 0 ? deductionCases.slice(currentIndex + 1) : deductionCases;
+  return candidates.find((item) => !solvedIds.includes(item.id))?.id ?? "";
+}
