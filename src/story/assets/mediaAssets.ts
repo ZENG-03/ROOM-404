@@ -162,3 +162,4 @@ export function resolvePhoto17Asset(visitCount: number): MediaAsset {
 
   return mediaAssets.photo17_web_v2;
 }
+
