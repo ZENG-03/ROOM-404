@@ -23,7 +23,7 @@ let loadPromise: Promise<void> | null = null;
 async function loadTextPool(): Promise<void> {
   if (textPoolLines) return;
   if (!loadPromise) {
-    loadPromise = fetch("/content/room404-text-pool.txt")
+    loadPromise = fetch(`${import.meta.env.BASE_URL}content/room404-text-pool.txt`)
       .then((response) => {
         if (!response.ok) throw new Error(`Text pool request failed: ${response.status}`);
         return response.text();

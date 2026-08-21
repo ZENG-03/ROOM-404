@@ -1,8 +1,13 @@
 import { useMemo, useState } from "react";
-import { Brain, CheckCheck, Database, ListChecks, RotateCcw, Search, X } from "lucide-react";
-import type { Evidence, SourceType } from "../../game/types";
+import { ArrowRight, Brain, CheckCheck, Database, GitBranch, ListChecks, LockKeyhole, RotateCcw, Search, X } from "lucide-react";
+import type { DeductionCase, Evidence, GameState, SourceType } from "../../game/types";
 import { useGameStore } from "../../game/engine/GameStore";
+import { buildEvidenceGraph } from "../../game/engine/EvidenceGraph";
+import { resolveNavigation } from "../../game/navigation/NavigationService";
+import { routes } from "../../game/navigation/RouteRegistry";
 import { allEvidence } from "../../story/evidenceRegistry";
+import { deductionCases, evaluateDeduction, type DeductionEvaluationStatus } from "../../story/deductions";
+import { getUiTheme } from "../../ui/theme";
 
 const knowledgeLabels: Record<string, string> = {
   knows_event_date_changed: "活动日期被改过",
@@ -87,7 +92,7 @@ const identityClueLabels: Record<string, string> = {
   camera: "Sony 小卡片机使用记录",
 };
 
-type WorkspaceTab = "evidence" | "knowledge" | "progress";
+type WorkspaceTab = "evidence" | "knowledge" | "progress" | "deductions";
 
 interface EvidencePanelProps {
   open: boolean;
@@ -95,7 +100,7 @@ interface EvidencePanelProps {
 }
 
 export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
-  const { state, reset } = useGameStore();
+  const { state, reset, navigate, submitDeduction } = useGameStore();
   const [tab, setTab] = useState<WorkspaceTab>("evidence");
   const [query, setQuery] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceType | "ALL">("ALL");
@@ -114,6 +119,8 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
     return `${item.title} ${item.summary} ${item.sourceType}`.toLocaleLowerCase().includes(normalizedQuery);
   }), [evidence, sourceFilter, onlyNew, newEvidenceIds, normalizedQuery]);
   const filteredKnowledge = state.knowledgeIds.filter((id) => !normalizedQuery || (knowledgeLabels[id] ?? id).toLocaleLowerCase().includes(normalizedQuery));
+  const theme = getUiTheme(state.currentRouteId, state.chapter);
+  const pendingRelations = buildEvidenceGraph(state).edges.filter((edge) => !edge.known).length;
 
   const sessionLabel = state.resolutionApplied
     ? `${state.endingId} Recorded`
@@ -149,16 +156,24 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
     <aside className={`evidence-panel ${open ? "open" : ""}`} aria-label="Evidence workspace" aria-hidden={!open} inert={!open}>
       <header className="panel-heading">
         <div>
-          <p>Current Session</p>
+          <p>{theme.code} / {theme.label}</p>
           <strong>{sessionLabel}</strong>
         </div>
         <button className="panel-close-button" type="button" title="Close" aria-label="Close evidence workspace" onClick={onClose}><X aria-hidden="true" /></button>
       </header>
 
+      <section className="workspace-summary-grid" aria-label="Investigation summary">
+        <div><span>NEW</span><strong>{newEvidenceIds.length}</strong></div>
+        <div><span>KNOWN</span><strong>{state.knowledgeIds.length}</strong></div>
+        <div><span>PENDING</span><strong>{pendingRelations}</strong></div>
+        <div><span>SOLVED</span><strong>{state.solvedDeductionIds.length}</strong></div>
+      </section>
+
       <nav className="workspace-tabs" aria-label="Session workspace views">
         <button type="button" className={tab === "evidence" ? "active" : ""} aria-pressed={tab === "evidence"} onClick={() => setTab("evidence")}><Database aria-hidden="true" /><span>Evidence</span><small>{state.evidenceIds.length}</small></button>
         <button type="button" className={tab === "knowledge" ? "active" : ""} aria-pressed={tab === "knowledge"} onClick={() => setTab("knowledge")}><Brain aria-hidden="true" /><span>Knowledge</span><small>{state.knowledgeIds.length}</small></button>
         <button type="button" className={tab === "progress" ? "active" : ""} aria-pressed={tab === "progress"} onClick={() => setTab("progress")}><ListChecks aria-hidden="true" /><span>Progress</span><small>CH{String(state.chapter).padStart(2, "0")}</small></button>
+        <button type="button" className={tab === "deductions" ? "active" : ""} aria-pressed={tab === "deductions"} onClick={() => setTab("deductions")}><GitBranch aria-hidden="true" /><span>Deductions</span><small>{state.solvedDeductionIds.length}/{deductionCases.length}</small></button>
       </nav>
 
       {(tab === "evidence" || tab === "knowledge") && (
@@ -177,14 +192,14 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
               <button type="button" className={onlyNew ? "active" : ""} disabled={newEvidenceIds.length === 0} aria-pressed={onlyNew} onClick={() => setOnlyNew((value) => !value)}>New {newEvidenceIds.length}</button>
               <button type="button" title="Mark all evidence reviewed" aria-label="Mark all evidence reviewed" disabled={newEvidenceIds.length === 0} onClick={() => { setAcknowledgedEvidenceIds(state.evidenceIds); setOnlyNew(false); }}><CheckCheck aria-hidden="true" /></button>
             </div>
-            {filteredEvidence.length === 0 ? <p className="workspace-empty">No evidence matches this view.</p> : <ul className="evidence-list">{filteredEvidence.map((item) => <li key={item.id} className={newEvidenceIds.includes(item.id) ? "new" : ""} data-source={item.sourceType}><span>{item.sourceType}{newEvidenceIds.includes(item.id) && <small>NEW</small>}</span><strong>{item.title}</strong><p>{item.summary}</p></li>)}</ul>}
+            {filteredEvidence.length === 0 ? <div className="workspace-empty"><p>No evidence matches this view.</p><button type="button" onClick={() => navigate(resolveNavigation("/evidence/graph"))}>Open Evidence Graph</button></div> : <ul className="evidence-list">{filteredEvidence.map((item) => <li key={item.id} className={newEvidenceIds.includes(item.id) ? "new" : ""} data-source={item.sourceType}><span>{item.sourceType}{newEvidenceIds.includes(item.id) && <small>NEW</small>}</span><strong>{item.title}</strong><p>{item.summary}</p></li>)}</ul>}
           </section>
         )}
 
         {tab === "knowledge" && (
           <section className="workspace-view" aria-label="Established knowledge">
             <p className="workspace-summary">{filteredKnowledge.length} established conclusions</p>
-            {filteredKnowledge.length === 0 ? <p className="workspace-empty">No knowledge matches this search.</p> : <ul className="knowledge-list">{filteredKnowledge.map((id) => <li key={id}>{knowledgeLabels[id] ?? id}</li>)}</ul>}
+            {filteredKnowledge.length === 0 ? <div className="workspace-empty"><p>No knowledge matches this search.</p><button type="button" onClick={() => navigate(resolveNavigation("/evidence/graph"))}>Review Relations</button></div> : <ul className="knowledge-list">{filteredKnowledge.map((id) => <li key={id}>{knowledgeLabels[id] ?? id}</li>)}</ul>}
           </section>
         )}
 
@@ -201,6 +216,8 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
             {state.chapter === 1 && <ProgressGroup title="Archive Investigation" summary={`${state.evidenceIds.length} evidence records`} items={[`Photo17 views: ${state.photo17Visits}`, `Archive captures: ${state.viewedCaptures.length}/2`, `Date conflict: ${state.chapter1Complete ? "resolved" : "investigating"}`]} />}
           </section>
         )}
+
+        {tab === "deductions" && <DeductionsView state={state} navigate={navigate} submitDeduction={submitDeduction} />}
       </div>
 
       <footer className="workspace-footer">
@@ -212,4 +229,65 @@ export function EvidencePanel({ open, onClose }: EvidencePanelProps) {
 
 function ProgressGroup({ title, summary, items }: { title: string; summary?: string; items: string[] }) {
   return <section className="progress-group"><h2>{title}</h2>{summary && <p className="identity-progress">{summary}</p>}<ul className="knowledge-list">{items.map((item) => <li key={item}>{item}</li>)}</ul></section>;
+}
+
+function DeductionsView({ state, navigate, submitDeduction }: { state: GameState; navigate: (payload: ReturnType<typeof resolveNavigation>) => void; submitDeduction: (caseId: string, answerId: string, evidenceIds: string[]) => void }) {
+  const [selectedCaseId, setSelectedCaseId] = useState(deductionCases[0]?.id ?? "");
+  const [selectedAnswerId, setSelectedAnswerId] = useState("");
+  const [selectedEvidenceIds, setSelectedEvidenceIds] = useState<string[]>([]);
+  const [feedback, setFeedback] = useState<{ status: DeductionEvaluationStatus; message: string } | null>(null);
+  const selectedCase = deductionCases.find((item) => item.id === selectedCaseId) ?? deductionCases[0];
+  const availableEvidence = state.evidenceIds.map((id) => allEvidence[id]).filter((item): item is Evidence => Boolean(item));
+  const isLocked = !selectedCase || state.chapter < selectedCase.chapter;
+  const isSolved = Boolean(selectedCase && state.solvedDeductionIds.includes(selectedCase.id));
+
+  function chooseCase(caseDef: DeductionCase) {
+    setSelectedCaseId(caseDef.id);
+    setSelectedAnswerId("");
+    setSelectedEvidenceIds([]);
+    setFeedback(null);
+  }
+
+  function toggleEvidence(id: string) {
+    setSelectedEvidenceIds((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length >= 4 ? current : [...current, id]);
+    setFeedback(null);
+  }
+
+  function submit() {
+    if (!selectedCase) return;
+    const status = evaluateDeduction(selectedCase, selectedAnswerId, selectedEvidenceIds);
+    const message = status === "correct"
+      ? "推理成立。结论、关联知识和解锁档案已写入当前 Session。"
+      : status === "partial"
+        ? selectedCase.partialFeedback
+        : status === "incomplete"
+          ? "请选择 2 至 4 条证据，再提交一个候选结论。"
+          : "当前证据组合不能支持这个结论。再次尝试后，系统会给出方向性提示。";
+    setFeedback({ status, message });
+    submitDeduction(selectedCase.id, selectedAnswerId, selectedEvidenceIds);
+  }
+
+  const nextPath = selectedCase?.nextRoute ? routes[selectedCase.nextRoute].path : "/evidence/graph";
+  const firstUnlockedEntry = selectedCase?.unlockTextEntryIds[0];
+  const attempts = selectedCase ? state.deductionAttempts[selectedCase.id] ?? 0 : 0;
+
+  return <section className="workspace-view deduction-view" aria-label="Deduction cases">
+    <header className="deduction-heading"><div><span>PROVENANCE CHECK</span><strong>{state.solvedDeductionIds.length}/{deductionCases.length} cases solved</strong></div><p>从已获得证据中选择关系，再提交一个保留来源边界的判断。</p></header>
+    <div className="deduction-case-list" aria-label="Deduction case list">
+      {deductionCases.map((caseDef) => {
+        const locked = state.chapter < caseDef.chapter;
+        const solved = state.solvedDeductionIds.includes(caseDef.id);
+        return <button key={caseDef.id} type="button" className={`${selectedCase?.id === caseDef.id ? "active" : ""} ${locked ? "locked" : ""}`} onClick={() => chooseCase(caseDef)}><span>CH{caseDef.chapter}</span><strong>{locked && <LockKeyhole aria-hidden="true" />}{caseDef.question}</strong><small>{solved ? "SOLVED" : locked ? "LOCKED" : `${state.deductionAttempts[caseDef.id] ?? 0} attempts`}</small></button>;
+      })}
+    </div>
+    {selectedCase && <article className="deduction-case-detail">
+      <header><span>CASE / {selectedCase.id}</span><h2>{selectedCase.question}</h2></header>
+      {isLocked ? <div className="deduction-locked"><LockKeyhole aria-hidden="true" /><strong>本案件将在 Chapter {selectedCase.chapter} 开放。</strong><p>先完成当前章节的来源链，避免用尚未出现的对象提前下结论。</p></div> : <>
+        <section className="deduction-section"><div className="deduction-section-heading"><h3>1. 选择证据</h3><small>{selectedEvidenceIds.length}/4 selected</small></div><p>只选择真正参与判断的 2 至 4 条记录。</p><div className="deduction-evidence-grid">{availableEvidence.length === 0 && <div className="deduction-empty">当前还没有可选证据，请先返回页面继续调查。</div>}{availableEvidence.map((item) => <button key={item.id} type="button" className={selectedEvidenceIds.includes(item.id) ? "selected" : ""} aria-pressed={selectedEvidenceIds.includes(item.id)} onClick={() => toggleEvidence(item.id)}><span>{item.sourceType}</span><strong>{item.title}</strong><small>{item.id}</small></button>)}</div><div className="deduction-required"><span>REQUIRED RELATION</span>{selectedCase.requiredEvidenceIds.map((id) => <strong key={id} className={selectedEvidenceIds.includes(id) ? "present" : "missing"}>{allEvidence[id]?.title ?? id}</strong>)}</div></section>
+        <section className="deduction-section"><div className="deduction-section-heading"><h3>2. 提交判断</h3><small>{isSolved ? "already solved" : "one answer"}</small></div><div className="deduction-answer-list">{selectedCase.candidateAnswers.map((answer) => <label key={answer.id} className={selectedAnswerId === answer.id ? "selected" : ""}><input type="radio" name={`deduction-${selectedCase.id}`} value={answer.id} checked={selectedAnswerId === answer.id} onChange={() => { setSelectedAnswerId(answer.id); setFeedback(null); }} disabled={isSolved} /><span><strong>{answer.label}</strong><small>{answer.explanation}</small></span></label>)}</div><button className="deduction-submit" type="button" onClick={submit} disabled={isSolved || selectedEvidenceIds.length < 2 || selectedEvidenceIds.length > 4 || !selectedAnswerId}>提交推理 <ArrowRight aria-hidden="true" /></button></section>
+        {feedback && <div className={`deduction-feedback ${feedback.status}`} role="status"><strong>{feedback.status.toUpperCase()}</strong><p>{feedback.message}</p>{(attempts >= 2 || feedback.status === "incorrect" || feedback.status === "partial") && <small>提示：{selectedCase.hintText}</small>}</div>}
+        {isSolved && <div className="deduction-next"><span>CASE RECORDED</span><strong>来源边界已保留，下一步可以继续检查关联对象。</strong><div><button type="button" onClick={() => navigate(resolveNavigation(nextPath))}>继续调查 <ArrowRight aria-hidden="true" /></button>{firstUnlockedEntry && <button type="button" onClick={() => navigate(resolveNavigation(`/search?view=text&entry=${encodeURIComponent(firstUnlockedEntry)}`))}>查看解锁档案</button>}</div></div>}
+      </>}
+    </article>}
+  </section>;
 }

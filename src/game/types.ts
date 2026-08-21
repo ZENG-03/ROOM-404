@@ -168,6 +168,9 @@ export interface GameEvent {
     | "PLAYER_POST_RESTORE_ORIGINAL"
     | "PLAYER_POST_PRESERVE_ORIGINAL"
     | "EVIDENCE_UNLOCK"
+    | "TEXT_ARCHIVE_READ"
+    | "DEDUCTION_ATTEMPT"
+    | "DEDUCTION_SOLVED"
     | "CHAPTER_COMPLETE";
   createdAt: string;
   routeId?: RouteId;
@@ -181,6 +184,47 @@ export interface Evidence {
   sourceType: SourceType;
   summary: string;
   supports: string[];
+}
+
+export interface TextArchiveEntry {
+  id: string;
+  chapter: 1 | 2 | 3 | 4 | 5 | 6;
+  section: string;
+  heading: string;
+  body: string;
+  lineStart: number;
+  sourceType: SourceType;
+  tags: string[];
+  relatedEvidenceIds: string[];
+  unlockCondition: string;
+}
+
+export interface TextArchiveIndex {
+  sourceFile: string;
+  lines: number;
+  characters: number;
+  entries: TextArchiveEntry[];
+}
+
+export interface DeductionAnswer {
+  id: string;
+  label: string;
+  explanation: string;
+}
+
+export interface DeductionCase {
+  id: string;
+  chapter: 1 | 2 | 3 | 4 | 5 | 6;
+  question: string;
+  candidateAnswers: DeductionAnswer[];
+  correctAnswerId: string;
+  requiredEvidenceIds: string[];
+  contradictionEvidenceIds: string[];
+  hintText: string;
+  successKnowledgeIds: string[];
+  unlockTextEntryIds: string[];
+  nextRoute?: RouteId;
+  partialFeedback: string;
 }
 
 export type AssetId =
@@ -225,6 +269,11 @@ export interface GameState {
   currentRouteId: RouteId;
   fakeUrl: string;
   searchQuery: string;
+  unlockedTextEntryIds: string[];
+  readTextEntryIds: string[];
+  solvedDeductionIds: string[];
+  deductionAttempts: Record<string, number>;
+  activeLeadId: string;
   events: GameEvent[];
   evidenceIds: string[];
   knowledgeIds: string[];

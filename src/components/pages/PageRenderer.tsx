@@ -70,9 +70,11 @@ import { anomalyLabels } from "../../game/engine/AnomalyEngine";
 import { unknownStageLabels } from "../../game/engine/UnknownEngine";
 import { getAchievementSnapshot } from "../../game/engine/AchievementEngine";
 import { buildEvidenceGraph } from "../../game/engine/EvidenceGraph";
-import type { EndingId } from "../../game/types";
+import type { EndingId, SourceType, TextArchiveEntry, TextArchiveIndex } from "../../game/types";
 import { LegacySiteShell } from "../legacy/LegacySiteShell";
 import { MediaSlot } from "../media/MediaSlot";
+import { deductionCases } from "../../story/deductions";
+import { filterTextEntries, getTextEntryStatus, isTextEntryUnlocked, loadTextArchive } from "../../story/textArchive";
 
 const linxiaNav: Array<[string, string]> = [
   ["About Me", "/site/2007/linxia"],
@@ -385,6 +387,8 @@ function ArchiveHome() {
         </div>
       </section>
 
+      <InvestigationLead state={state} navigate={navigate} />
+
       <section className="archive-section">
         <h2>最近更新的历史快照</h2>
         <div className="archive-list">
@@ -420,7 +424,18 @@ function ChapterEndPage() {
   const chapterContent = content[chapter] ?? content[1];
 
   if (!complete) return <article className="archive-page chapter-end-page"><header className="archive-hero"><p className="eyebrow">CHAPTER {String(chapter).padStart(2, "0")} / LOCKED</p><h1>阶段记录还没有闭合。</h1><p>Chapter {chapter} 尚未完成，Chapter End 不会提前写入 Session。</p></header><section className="chapter-end-evidence"><span>ACCESS CONDITION</span><strong>CHAPTER PROGRESS PENDING</strong><p>返回 Active Archive，从当前章节留下的来源链继续调查。</p></section><div className="button-row"><button type="button" onClick={() => navigate(resolveNavigation("/"))}>Return to Archive</button></div></article>;
-  return <article className="archive-page chapter-end-page"><header className="archive-hero"><p className="eyebrow">CHAPTER {String(chapter).padStart(2, "0")} / END</p><h1>{chapterContent.title}</h1><p>{chapterContent.summary}</p></header><section className="chapter-end-evidence"><span>SOURCE CHAIN RECORDED</span><strong>{chapterContent.evidence}</strong><p>记录已写入当前 Session。它们保持来源标签，不会自动合并成现实事实。</p></section><div className="button-row"><button type="button" onClick={() => navigate(resolveNavigation(chapterContent.next))}>{chapterContent.nextLabel}<ArrowRight aria-hidden="true" /></button><button type="button" onClick={() => navigate(resolveNavigation("/"))}>Return to Archive</button></div></article>;
+  return <article className="archive-page chapter-end-page"><header className="archive-hero"><p className="eyebrow">CHAPTER {String(chapter).padStart(2, "0")} / END</p><h1>{chapterContent.title}</h1><p>{chapterContent.summary}</p></header><section className="chapter-end-evidence"><span>SOURCE CHAIN RECORDED</span><strong>{chapterContent.evidence}</strong><p>记录已写入当前 Session。它们保持来源标签，不会自动合并成现实事实。</p></section><section className="chapter-end-progress" aria-label="Chapter investigation summary"><div><span>EVIDENCE</span><strong>{state.evidenceIds.length}</strong><small>session records</small></div><div><span>TEXT ARCHIVE</span><strong>{state.unlockedTextEntryIds.length}</strong><small>unlocked blocks</small></div><div><span>DEDUCTIONS</span><strong>{state.solvedDeductionIds.length}</strong><small>solved cases</small></div><div><span>PENDING RELATIONS</span><strong>{buildEvidenceGraph(state).edges.filter((edge) => !edge.known).length}</strong><small>still unverified</small></div></section><div className="button-row"><button type="button" onClick={() => navigate(resolveNavigation(chapterContent.next))}>{chapterContent.nextLabel}<ArrowRight aria-hidden="true" /></button><button type="button" onClick={() => navigate(resolveNavigation("/"))}>Return to Archive</button></div></article>;
+}
+
+function InvestigationLead({ state, navigate }: { state: ReturnType<typeof useGameStore>["state"]; navigate: (payload: ReturnType<typeof resolveNavigation>) => void }) {
+  const lead = deductionCases.find((item) => item.id === state.activeLeadId && state.chapter >= item.chapter && !state.solvedDeductionIds.includes(item.id))
+    ?? deductionCases.find((item) => item.chapter === state.chapter && !state.solvedDeductionIds.includes(item.id))
+    ?? deductionCases.find((item) => item.chapter > state.chapter && !state.solvedDeductionIds.includes(item.id));
+
+  if (!lead) return null;
+  const collected = lead.requiredEvidenceIds.filter((id) => state.evidenceIds.includes(id)).length;
+  const locked = state.chapter < lead.chapter;
+  return <section className={`investigation-lead ${locked ? "locked" : ""}`}><header><div><span>{locked ? "NEXT LEAD" : "CURRENT LEAD"} / CH{lead.chapter}</span><strong>{lead.id}</strong></div><small>{collected}/{lead.requiredEvidenceIds.length} required evidence</small></header><h2>{lead.question}</h2><p>{locked ? `完成 Chapter ${lead.chapter} 前的来源链后开放此案件。` : lead.hintText}</p><div><span>{locked ? "LOCKED" : "EVIDENCE WORKSPACE"}</span><button type="button" onClick={() => navigate(resolveNavigation("/evidence/graph"))}>{locked ? "Review Archive" : "Open Deductions"}<ArrowRight aria-hidden="true" /></button></div></section>;
 }
 
 function PostEndingArchive({ endingId }: { endingId: EndingId }) {
@@ -437,11 +452,20 @@ function PostEndingArchive({ endingId }: { endingId: EndingId }) {
 }
 
 function ArchiveSearch() {
-  const { state, navigate } = useGameStore();
+  const { state, navigate, readTextEntry } = useGameStore();
   const query = state.searchQuery || "林夏";
+  const searchParams = new URLSearchParams(state.fakeUrl.split("?")[1] ?? "");
+  const archiveMode = searchParams.get("view") === "text" ? "archive" : "results";
+  const selectedTextEntryId = searchParams.get("entry") ?? "";
   const [textPoolMatches, setTextPoolMatches] = useState<Awaited<ReturnType<typeof searchTextPool>>["matches"]>([]);
   const [textPoolStats, setTextPoolStats] = useState({ lines: 0, characters: 0 });
   const [textPoolStatus, setTextPoolStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [textArchiveIndex, setTextArchiveIndex] = useState<TextArchiveIndex | null>(null);
+  const [textArchiveStatus, setTextArchiveStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [archiveQuery, setArchiveQuery] = useState("");
+  const [archiveChapterFilter, setArchiveChapterFilter] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6>(0);
+  const [archiveSourceFilter, setArchiveSourceFilter] = useState<SourceType | "ALL">("ALL");
+  const [showLockedText, setShowLockedText] = useState(false);
   const isBlueMoonReference = query.toUpperCase() === "BM-1847";
   const isNode7Reference = query.toUpperCase() === "OLD DISTRICT NODE 7";
   const isPhoto17Reference = ["DSC0417.JPG", "DSC0017.JPG"].includes(query.toUpperCase());
@@ -483,6 +507,45 @@ function ArchiveSearch() {
       active = false;
     };
   }, [query]);
+  useEffect(() => {
+    let active = true;
+    setTextArchiveStatus("loading");
+    loadTextArchive()
+      .then((index) => {
+        if (!active) return;
+        setTextArchiveIndex(index);
+        setTextArchiveStatus("ready");
+      })
+      .catch(() => {
+        if (!active) return;
+        setTextArchiveStatus("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const selectedTextEntry = textArchiveIndex?.entries.find((entry) => entry.id === selectedTextEntryId);
+  const visibleTextEntries = textArchiveIndex
+    ? filterTextEntries(textArchiveIndex.entries, state, {
+      chapter: archiveChapterFilter || undefined,
+      sourceType: archiveSourceFilter,
+      query: archiveQuery,
+      includeLocked: showLockedText,
+    })
+    : [];
+  const textSourceOptions = textArchiveIndex ? [...new Set(textArchiveIndex.entries.map((entry) => entry.sourceType))].sort() : [];
+
+  useEffect(() => {
+    if (selectedTextEntry && isTextEntryUnlocked(selectedTextEntry, state) && !state.readTextEntryIds.includes(selectedTextEntry.id)) {
+      readTextEntry(selectedTextEntry.id);
+    }
+  }, [readTextEntry, selectedTextEntry, state]);
+
+  function openTextArchive(entryId?: string) {
+    const suffix = entryId ? `&entry=${encodeURIComponent(entryId)}` : "";
+    navigate(resolveNavigation(`/search?view=text${suffix}`));
+  }
   const total = isPlayerPostReference || isBlueMoonReference || isNode7Reference || isPhoto17Reference
     ? isPlayerPostReference ? 1 : isBlueMoonReference ? 3 : isNode7Reference ? 2 : 3
     : state.chapter1Complete || state.knowledgeIds.includes("knows_event_date_changed")
@@ -492,26 +555,71 @@ function ArchiveSearch() {
   return (
     <article className="archive-page">
       <header className="search-header">
-        <p>搜索结果：</p>
-        <h1>{query}</h1>
-        <span>{total} Results</span>
+        <p>{archiveMode === "archive" ? "档案库：" : "搜索结果："}</p>
+        <h1>{archiveMode === "archive" ? "Text Archive" : query}</h1>
+        <span>{archiveMode === "archive" ? `${textArchiveIndex?.entries.length.toLocaleString() ?? "..."} indexed entries` : `${total} Results`}</span>
       </header>
-      <div className="result-list">
-        {results.slice(0, total).map((result) => (
-          <button key={result.title} type="button" onClick={() => navigate(resolveNavigation(result.path))}>
-            <strong>{result.title}</strong>
-            <span>{result.url}</span>
-            <small>{result.captured}</small>
-            <p>{result.snippet}</p>
-          </button>
-        ))}
-      </div>
-      <section className="text-pool-search"><header><div><span>FULL TEXT POOL</span><strong>{textPoolStatus === "loading" ? "Indexing source text..." : textPoolStatus === "error" ? "Source unavailable" : `${textPoolMatches.length} matching excerpts`}</strong></div><small>{textPoolStats.lines.toLocaleString()} lines / {Math.round(textPoolStats.characters / 1000)}k chars indexed</small></header>{textPoolStatus === "ready" && textPoolMatches.length === 0 && <p className="text-pool-empty">NO TEXT POOL MATCH. 这表示当前全文库索引没有命中“{query}”，不代表现实中不存在相关对象。</p>}{textPoolMatches.map((match) => <article key={`${match.line}-${match.excerpt}`}><span>LINE {match.line}</span><strong>{match.heading}</strong><p>{match.excerpt}</p></article>)}</section>
+
+      <nav className="search-mode-tabs" aria-label="Archive search modes">
+        <button type="button" className={archiveMode === "results" ? "active" : ""} aria-pressed={archiveMode === "results"} onClick={() => navigate(resolveNavigation(`/search?q=${encodeURIComponent(query)}&view=results`))}>Search Results</button>
+        <button type="button" className={archiveMode === "archive" ? "active" : ""} aria-pressed={archiveMode === "archive"} onClick={() => openTextArchive()}>Text Archive <span>{textArchiveIndex?.entries.length ?? "..."}</span></button>
+      </nav>
+
+      {archiveMode === "results" ? (
+        <>
+          <div className="result-list">
+            {results.slice(0, total).map((result) => (
+              <button key={result.title} type="button" onClick={() => navigate(resolveNavigation(result.path))}>
+                <strong>{result.title}</strong>
+                <span>{result.url}</span>
+                <small>{result.captured}</small>
+                <p>{result.snippet}</p>
+              </button>
+            ))}
+          </div>
+          <section className="text-pool-search"><header><div><span>FULL TEXT POOL</span><strong>{textPoolStatus === "loading" ? "Indexing source text..." : textPoolStatus === "error" ? "Source unavailable" : `${textPoolMatches.length} matching excerpts`}</strong></div><small>{textPoolStats.lines.toLocaleString()} lines / {Math.round(textPoolStats.characters / 1000)}k chars indexed</small></header>{textPoolStatus === "ready" && textPoolMatches.length === 0 && <p className="text-pool-empty">NO TEXT POOL MATCH. 这表示当前全文库索引没有命中“{query}”，不代表现实中不存在相关对象。</p>}{textPoolMatches.map((match) => <article key={`${match.line}-${match.excerpt}`}><span>LINE {match.line}</span><strong>{match.heading}</strong><p>{match.excerpt}</p></article>)}</section>
+          <section className="text-archive-promo"><div><span>679,653 CHARACTERS / 1,045 ARCHIVE BLOCKS</span><strong>全文库已经接入为可解锁档案。</strong><p>精选条目进入调查流程，其余内容会随着章节和推理结论逐步开放。</p></div><button type="button" onClick={() => openTextArchive()}>Browse Text Archive <ArrowRight aria-hidden="true" /></button></section>
+        </>
+      ) : (
+        <section className="text-archive-section" aria-label="Text archive browser">
+          <div className="text-archive-toolbar">
+            <label>关键词<input value={archiveQuery} onChange={(event) => setArchiveQuery(event.target.value)} placeholder="章节、标题或正文" /></label>
+            <label>章节<select value={archiveChapterFilter} onChange={(event) => setArchiveChapterFilter(Number(event.target.value) as 0 | 1 | 2 | 3 | 4 | 5 | 6)}><option value={0}>全部章节</option>{[1, 2, 3, 4, 5, 6].map((chapter) => <option key={chapter} value={chapter}>Chapter {chapter}</option>)}</select></label>
+            <label>来源<select value={archiveSourceFilter} onChange={(event) => setArchiveSourceFilter(event.target.value as SourceType | "ALL")}><option value="ALL">全部来源</option>{textSourceOptions.map((source) => <option key={source} value={source}>{source}</option>)}</select></label>
+            <label className="text-archive-toggle"><input type="checkbox" checked={showLockedText} onChange={(event) => setShowLockedText(event.target.checked)} />显示锁定档案</label>
+          </div>
+          {textArchiveStatus === "loading" && <div className="text-archive-empty"><strong>正在载入档案索引...</strong><p>原始文本仍保留在 public/content/room404-text-pool.txt。</p></div>}
+          {textArchiveStatus === "error" && <div className="text-archive-empty"><strong>档案索引暂时不可用。</strong><p>全文来源未被删除，刷新后可以重新尝试加载索引。</p></div>}
+          {textArchiveStatus === "ready" && (
+            <div className="text-archive-layout">
+              <div className="text-archive-list" aria-label="Text archive entries">
+                <div className="text-archive-list-heading"><span>{visibleTextEntries.length.toLocaleString()} 条可见档案</span><small>{showLockedText ? "包含锁定条目" : "仅显示已解锁条目"}</small></div>
+                {visibleTextEntries.slice(0, 120).map((entry) => {
+                  const status = getTextEntryStatus(entry, state);
+                  return <button key={entry.id} type="button" className={`text-archive-card ${selectedTextEntryId === entry.id ? "active" : ""} ${status}`} onClick={() => openTextArchive(entry.id)}><span>CH{entry.chapter} / LINE {entry.lineStart}</span><strong>{status === "locked" ? "LOCKED / " : ""}{entry.heading}</strong><small>{entry.sourceType} · {entry.section}</small><p>{entry.body.slice(0, 120)}{entry.body.length > 120 ? "…" : ""}</p></button>;
+                })}
+                {visibleTextEntries.length > 120 && <p className="text-archive-list-note">当前显示前 120 条，请继续缩小章节、来源或关键词范围。</p>}
+                {visibleTextEntries.length === 0 && <div className="text-archive-empty"><strong>没有符合当前条件的已解锁档案。</strong><p>可以打开“显示锁定档案”，或继续调查当前章节的证据关系。</p></div>}
+              </div>
+              <div className="text-archive-reader" aria-live="polite">
+                {!selectedTextEntry && <div className="text-archive-empty"><FileSearch aria-hidden="true" /><strong>选择一条档案开始阅读。</strong><p>每条档案都保留来源类型、原文行号和关联证据。</p></div>}
+                {selectedTextEntry && <TextArchiveReader entry={selectedTextEntry} state={state} onOpenEntry={openTextArchive} />}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
       {state.chapter1Complete && (
         <p className="session-note">1 restricted object discovered.</p>
       )}
     </article>
   );
+}
+
+function TextArchiveReader({ entry, state, onOpenEntry }: { entry: TextArchiveEntry; state: ReturnType<typeof useGameStore>["state"]; onOpenEntry: (entryId?: string) => void }) {
+  const unlocked = isTextEntryUnlocked(entry, state);
+  const paragraphs = entry.body.split(/\n{2,}/).map((part) => part.trim()).filter(Boolean);
+  return <article className={`text-archive-reader-content ${unlocked ? "unlocked" : "locked"}`}><header><span>TEXT ARCHIVE / CH{entry.chapter}</span><strong>{entry.heading}</strong><small>{entry.sourceType} · line {entry.lineStart} · {entry.section}</small></header>{unlocked ? <>{paragraphs.map((paragraph, index) => <p key={`${entry.id}-${index}`}>{paragraph}</p>)}<div className="text-archive-meta"><span>RELATED EVIDENCE</span><strong>{entry.relatedEvidenceIds.length ? entry.relatedEvidenceIds.join(" / ") : "NONE INDEXED"}</strong><span>TAGS</span><strong>{entry.tags.join(" / ")}</strong></div></> : <div className="text-archive-lock"><LockKeyhole aria-hidden="true" /><strong>档案尚未解锁。</strong><p>{entry.unlockCondition === "chapter:6" ? "完成对应章节并保留来源边界后开放。" : "完成相关章节推理后开放。"}</p><button type="button" onClick={() => onOpenEntry()}>返回档案列表</button></div>}</article>;
 }
 
 const blueMoonReferenceResults = [

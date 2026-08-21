@@ -12,10 +12,12 @@ export function resolveNavigation(input: string): NavigatePayload {
   }
 
   if (trimmed.startsWith("/search")) {
-    const query = new URLSearchParams(trimmed.split("?")[1] ?? "").get("q") ?? "";
+    const params = new URLSearchParams(trimmed.split("?")[1] ?? "");
+    const query = params.get("q") ?? "";
+    const queryString = params.toString();
     return {
       routeId: "ARCHIVE_SEARCH",
-      fakeUrl: query ? `/search?q=${query}` : routes.ARCHIVE_SEARCH.path,
+      fakeUrl: queryString ? `/search?${queryString}` : routes.ARCHIVE_SEARCH.path,
       query,
     };
   }
