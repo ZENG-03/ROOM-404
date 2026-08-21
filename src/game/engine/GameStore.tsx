@@ -4,7 +4,7 @@ import type { EndingId, GameEvent, GameState, NavigatePayload, RouteId } from ".
 import { calculateAnomalyLevel } from "./AnomalyEngine";
 import { calculateUnknownStage } from "./UnknownEngine";
 import { getNewAchievementIds } from "./AchievementEngine";
-import { evaluateDeduction, getDeductionCase } from "../../story/deductions";
+import { evaluateDeduction, getDeductionCase, getNextDeductionCaseId } from "../../story/deductions";
 
 const SAVE_KEY = "room404.save.v1";
 
@@ -373,7 +373,7 @@ function reduceState(state: GameState, action: Action): GameState {
       solvedDeductionIds: addUnique(nextState.solvedDeductionIds, caseDef.id),
       unlockedTextEntryIds: addUniqueMany(nextState.unlockedTextEntryIds, caseDef.unlockTextEntryIds),
       knowledgeIds: addUniqueMany(nextState.knowledgeIds, caseDef.successKnowledgeIds),
-      activeLeadId: caseDef.nextRoute ?? "",
+      activeLeadId: getNextDeductionCaseId(caseDef.id, nextState.solvedDeductionIds),
     };
   }
 
